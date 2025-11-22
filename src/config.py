@@ -28,6 +28,31 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     
+    # Naver API Configuration (for place search)
+    NAVER_CLIENT_ID: Optional[str] = None
+    NAVER_CLIENT_SECRET: Optional[str] = None
+    
+    # Naver Clova Studio API Configuration (for RAG)
+    NAVER_CLOVA_API_KEY: Optional[str] = None
+    NAVER_CLOVA_APIGW_API_KEY: Optional[str] = None
+    NAVER_CLOVA_REQUEST_ID: Optional[str] = None
+    
+    # RAG Configuration
+    RAG_ENABLED: bool = True
+    EMBEDDING_MODEL: str = "bge-m3"  # Naver Embedding v2
+    EMBEDDING_DIMENSION: int = 1024
+    
+    # Vector Database Configuration (Pinecone)
+    PINECONE_API_KEY: Optional[str] = None
+    PINECONE_ENVIRONMENT: Optional[str] = None  # e.g., "us-west1-gcp"
+    PINECONE_INDEX_NAME: str = "travel-documents"
+    
+    # RAG Search Parameters
+    RAG_TOP_K: int = 10  # Initial retrieval count
+    RAG_RERANK_TOP_K: int = 3  # After reranking
+    RAG_MAX_TOKENS: int = 1024
+    RAG_TEMPERATURE: float = 0.5
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

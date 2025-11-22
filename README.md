@@ -1,41 +1,84 @@
-# AI-Powered Travel Planning Application
+# Traver - Naver AI-Powered Travel Planning Platform
 
-An intelligent travel planning agent built with LangGraph and integrated with Laravel backend APIs. This agent provides personalized travel recommendations, creates itineraries, and supports multilingual interactions.
+**Traver** is an intelligent travel planning platform powered by Naver AI that handles research, planning, risk detection, booking, and coordination in one unified system.
+
+Built with LangGraph and integrated with backend APIs, Traver provides personalized travel recommendations, creates intelligent itineraries, and offers expert cultural knowledge through AI-powered retrieval.
+
+## What is Traver?
+
+Traver is not just a chatbot - it's a comprehensive travel planning platform that:
+
+🔍 **Researches** - AI-powered destination analysis and cultural knowledge  
+📋 **Plans** - Intelligent itinerary generation with optimization  
+⚠️ **Detects** - Risk assessment and safety recommendations  
+🎫 **Books** - Integrated booking coordination (coming soon)  
+🤝 **Coordinates** - Unified system with backend synchronization
 
 ## Features
 
-### 1. Travel Planning & Recommendations
-- **Place Search**: Search for places by text query with automatic Korean translation
-- **Nearby Search**: Find attractions, restaurants, and hotels near specific coordinates
-- **Web Scraping**: Scrape tourist information from VisitKorea website
-- **Automatic Trip Planning**: Generate complete itineraries with scheduling
+### 1. Intelligent Intent Detection
+- **Conversation Handler**: Warm greetings and suggestions for next actions
+- **RAG Query Engine**: Cultural knowledge and historical information retrieval
+- **Trip Planning**: AI-powered itinerary generation with research
+- **Place Discovery**: Smart recommendations based on preferences
+- **Context-Aware**: Extracts intent from latest message, preserves conversation history
+
+### 2. RAG (Knowledge Retrieval) System
+- **Naver Clova Embedding v2**: 1024-dimensional vector embeddings
+- **Pinecone Vector Database**: Semantic search for cultural knowledge
+- **Multilingual Support**: Korean documents with English/Korean Q&A
+- **Citation System**: Answers with source attribution
+- **Auto-Translation**: Translates queries for optimal search
+
+### 3. Travel Planning & Recommendations
+- **Place Search**: Search with automatic Korean translation
+- **Nearby Search**: Find attractions, restaurants, and hotels by coordinates
+- **Web Scraping**: Tourist information from VisitKorea
+- **Automatic Trip Planning**: Complete itineraries with intelligent scheduling
 - **Smart Recommendations**: AI-powered suggestions based on user preferences
 
-### 2. Multilingual Support
-- **Automatic Language Detection**: Detects user's language from messages
-- **Korean Backend Integration**: Translates queries to Korean for optimal backend search
-- **Response Translation**: Returns responses in user's preferred language
+### 4. Multilingual Support
+- **Automatic Language Detection**: Detects Korean vs English
+- **Korean Backend Integration**: Translates queries for optimal search
+- **Response Translation**: Returns in user's preferred language
+- **RAG Multilingual**: 
+  - English query → Korean search → English answer
+  - Korean query → Korean search → Korean answer
 
-### 3. Image Translation (UI-Triggered)
+### 5. Image Translation (UI-Triggered)
 - Agent recognizes image translation requests
 - Triggers UI to open image upload interface
 - Backend API handles actual translation
 
-### 4. Context-Aware Conversations
-- Maintains chat session context (destination, budget, interests, travel dates)
+### 6. Context-Aware Conversations
+- Maintains chat session context (destination, budget, interests, dates)
 - Tracks conversation history through backend API
-- Stores all interactions in database
+- Intent extracted from **latest message only**
+- Conversation history provides context
 
 ## Architecture
 
-### LangGraph Workflow
+### Traver's AI-Powered Workflow
 ```
-Initialize Session → Route Request → Search & Plan → Generate Response → Save Response
+User Message → Initialize Session → Route Request → Process Intent → Generate Response → Save
+                                           ↓
+                    ┌──────────────────────┼──────────────────────┐
+                    ↓                      ↓                      ↓
+            Conversation            RAG Knowledge           Planning/Discovery
+         (casual chat)          (culture/history)         (itinerary/places)
 ```
 
-**Nodes:**
+**Intent Detection:**
+1. **Conversation**: Greetings, general chat → Warm response + suggestions
+2. **RAG Query**: Culture, history, tips → Knowledge base search + citations
+3. **Trip Planning**: Plan, itinerary → AI-powered schedule generation
+4. **Place Discovery**: Recommend, find → Smart place suggestions
+
+### LangGraph Workflow Nodes
 - **Initialize**: Load chat session context from backend
-- **Route**: Determine request type (search, planning, image translation)
+- **Route**: Detect intent from **latest message** (history = context)
+- **Conversation**: Handle casual chat with LLM
+- **RAG Query**: Search knowledge base with Naver Clova + Pinecone
 - **Search & Plan**: Execute place searches and create travel plans
 - **Generate**: Format responses with structured UI components
 - **Save**: Store agent responses in backend database

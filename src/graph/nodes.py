@@ -19,6 +19,13 @@ from src.tools.place_tools import (
     scrape_korea_tourist_spots,
     get_place_details_by_korean_name
 )
+from src.tools.rag_tools import (
+    is_rag_query,
+    embed_query,
+    search_vector_db,
+    rerank_documents,
+    fetch_document_metadata
+)
 from src.config import settings
 
 
@@ -78,24 +85,131 @@ async def initialize_session(state: AgentState) -> AgentState:
 async def route_request(state: AgentState) -> AgentState:
     """Route the user request to appropriate handling logic.
     
+    Analyzes the LATEST user message to determine intent:
+    - Casual conversation (greetings, general chat)
+    - Trip planning (create itinerary)
+    - Place suggestions (find destinations)
+    - RAG query (culture, history, tips)
+    
+    Note: Conversation history provides context, but intent is extracted from latest message only.
+    
     Args:
         state: Current agent state
         
     Returns:
         Updated state with routing decision
     """
-    logger.info("Routing user request")
+    logger.info("Routing user request - analyzing latest message intent")
     
-    user_msg = state["user_message"].lower()
+    user_msg = state["user_message"]
+    user_msg_lower = user_msg.lower()
     
     # Check for image translation request
-    if any(keyword in user_msg for keyword in ["translate image", "image translation", "translate this image", "translate photo"]):
+    if any(keyword in user_msg_lower for keyword in ["translate image", "image translation", "translate this image", "translate photo"]):
         state["trigger_image_translation"] = True
-        logger.info("Routing to image translation")
+        state["intent_type"] = "image_translation"
+        logger.info("Intent: Image Translation")
         return state
     
-    # Continue with normal flow
-    logger.info("Routing to planning/search flow")
+    # 1. Check for RAG queries (culture, history, customs, tips)
+    # RAG keywords: culture, history, custom, etiquette, tradition, tip, insight, about, dynasty, palace, temple
+    if settings.RAG_ENABLED and is_rag_query(user_msg):
+        state["intent_type"] = "rag_query"
+        state["actions_taken"].append("rag_query_detected")
+        logger.info("Intent: RAG Query (culture/history/tips)")
+        return state
+    
+    # 2. Check for trip planning keywords (create itinerary, plan trip)
+    trip_planning_keywords = [
+        "plan", "itinerary", "schedule", "trip plan", "travel plan",
+        "계획", "일정", "여행 계획", "스케줄"
+    ]
+    if any(keyword in user_msg_lower for keyword in trip_planning_keywords):
+        state["intent_type"] = "trip_planning"
+        logger.info("Intent: Trip Planning")
+        return state
+    
+    # 3. Check for place suggestion keywords (find, recommend, suggest)
+    place_keywords = [
+        "suggest", "recommend", "find", "show me", "looking for", "search",
+        "추천", "찾아", "보여", "검색"
+    ]
+    if any(keyword in user_msg_lower for keyword in place_keywords):
+        state["intent_type"] = "suggest_places"
+        logger.info("Intent: Suggest Places")
+        return state
+    
+    # 4. Default to casual conversation (greetings, general chat)
+    # This handles: hi, hello, how are you, tell me about yourself, etc.
+    state["intent_type"] = "conversation"
+    logger.info("Intent: Casual Conversation")
+    return state
+
+
+async def casual_conversation(state: AgentState) -> AgentState:
+    """Handle casual conversation with suggestions for next actions.
+    
+    When user says hi or engages in general conversation, respond warmly
+    and suggest options: plan trip, find destinations, or learn about culture.
+    
+    Args:
+        state: Current agent state
+        
+    Returns:
+        Updated state with conversational response
+    """
+    logger.info("Handling casual conversation")
+    
+    user_msg = state["user_message"]
+    destination = state.get("destination", "Korea")
+    
+    try:
+        # Use LLM to generate friendly conversational response
+        system_prompt = f"""You are Traver - a Naver AI-powered travel planning platform. You assist with research, planning, risk detection, booking, and coordination in one unified system.
+
+Respond warmly and naturally to their message, then suggest helpful options:
+1. Plan a trip (create an itinerary with research and coordination)
+2. Find destinations (discover places to visit with AI-powered recommendations)
+3. Learn about Korean culture (history, customs, etiquette from your knowledge base)
+
+Keep the response concise (2-3 sentences) and friendly. Emphasize your AI-powered capabilities.
+Destination context: {destination}
+
+User message: {user_msg}"""
+        
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_msg)
+        ]
+        
+        response = await llm.ainvoke(messages)
+        conversational_response = response.content.strip()
+        
+        # Set response
+        state["rag_answer"] = conversational_response  # Reuse rag_answer for text response
+        state["actions_taken"].append("casual_conversation")
+        
+        # Suggest next actions
+        state["next_suggestions"] = [
+            "Plan my trip",
+            "Find places to visit",
+            "Learn about Korean culture"
+        ]
+        
+        logger.info("Casual conversation response generated")
+        
+    except Exception as e:
+        logger.error(f"Error in casual conversation: {e}", exc_info=True)
+        state["rag_answer"] = (
+            f"Hello! I'm Traver, your Naver AI-powered travel planning platform. "
+            f"I handle research, planning, risk detection, booking, and coordination in one unified system.\n\n"
+            f"How can I assist you today?\n"
+            f"• Plan an intelligent trip to {destination}\n"
+            f"• Discover AI-recommended places to visit\n"
+            f"• Learn about Korean culture and customs from my knowledge base"
+        )
+        state["next_suggestions"] = ["Plan my trip", "Find places", "Learn about culture"]
+    
     return state
 
 
@@ -601,6 +715,68 @@ async def generate_response(state: AgentState) -> AgentState:
         )
         return state
     
+    # Handle casual conversation responses
+    if state.get("intent_type") == "conversation" and state.get("rag_answer"):
+        logger.info("Generating conversation response")
+        
+        state["final_response"] = response_formatter.format_simple_message(
+            message=state["rag_answer"],
+            actions_taken=state["actions_taken"],
+            next_suggestions=state.get("next_suggestions", [])
+        )
+        
+        logger.info("Conversation response generated")
+        return state
+    
+    # Handle RAG query results
+    if state.get("rag_answer"):
+        logger.info("Generating RAG response with citations")
+        
+        rag_answer = state["rag_answer"]
+        cited_sources = state.get("rag_cited_sources", [])
+        
+        # Format citations for UI
+        citations = []
+        for idx, source in enumerate(cited_sources, 1):
+            citation = {
+                "id": source.get("id"),
+                "excerpt": source.get("doc", "")[:200] + "..." if len(source.get("doc", "")) > 200 else source.get("doc", ""),
+                "metadata": source.get("metadata", {}),
+                "full_metadata": source.get("full_metadata", {})
+            }
+            citations.append(citation)
+        
+        # Create travel_knowledge component
+        component = {
+            "type": "travel_knowledge",
+            "data": {
+                "answer": rag_answer,
+                "citations": citations,
+                "query": state["user_message"],
+                "retrieved_count": len(state.get("rag_documents", []))
+            }
+        }
+        
+        # Get next suggestions
+        next_suggestions = state.get("next_suggestions", [])
+        if not next_suggestions:
+            next_suggestions = [
+                "Tell me more",
+                "Find related places",
+                "Plan my itinerary"
+            ]
+        
+        state["final_response"] = {
+            "message": "Here's what I found about your question:",
+            "message_type": "travel_knowledge",
+            "components": [component],
+            "actions_taken": state["actions_taken"],
+            "next_suggestions": next_suggestions
+        }
+        
+        logger.info(f"RAG response generated with {len(citations)} citations")
+        return state
+    
     # Handle place search results
     if state["places_found"]:
         places = state["places_found"]
@@ -623,18 +799,17 @@ async def generate_response(state: AgentState) -> AgentState:
                     days_schedule[day] = []
                 days_schedule[day].append(place)
             
-            # Format as components for UI
-            components = []
-            for day_num in sorted(days_schedule.keys()):
-                day_places = days_schedule[day_num]
-                components.append({
-                    "type": "trip_plan_day_schedule",
-                    "data": {
-                        "day": day_num,
-                        "date": _get_date_for_day(state.get("travel_dates"), day_num),
-                        "places": day_places
-                    }
-                })
+            # Create trip planning component with all places
+            components = [{
+                "type": "trip_planning",
+                "data": {
+                    "destination": destination,
+                    "num_days": num_days,
+                    "travel_dates": state.get("travel_dates"),
+                    "places": places,  # All places with day/time info
+                    "days_schedule": {str(day): day_places for day, day_places in days_schedule.items()}
+                }
+            }]
             
             next_suggestions = [
                 "Modify itinerary",
@@ -648,6 +823,7 @@ async def generate_response(state: AgentState) -> AgentState:
             
             state["final_response"] = {
                 "message": message,
+                "message_type": "trip_planning",
                 "components": translated_components,
                 "actions_taken": state["actions_taken"],
                 "next_suggestions": next_suggestions
@@ -708,6 +884,147 @@ def _get_date_for_day(travel_dates: dict, day_num: int) -> str:
         return target_date.strftime("%Y-%m-%d")
     except:
         return f"Day {day_num}"
+
+
+async def handle_rag_query(state: AgentState) -> AgentState:
+    """Handle RAG queries for travel knowledge (culture, history, tips, insights).
+    
+    This node processes queries about cultural information, historical context,
+    travel tips, and local insights using the RAG pipeline:
+    
+    Flow:
+    1. Detect query language (Korean or other)
+    2. If not Korean, translate to Korean for RAG search
+    3. Embed the Korean query
+    4. Search vector database (Korean documents)
+    5. Rerank results
+    6. Generate answer in Korean from Korean context
+    7. If original query was not Korean, translate answer to English
+    
+    Note: Uses LATEST user message only, conversation history is just context.
+    
+    Args:
+        state: Current agent state
+        
+    Returns:
+        Updated state with RAG results
+    """
+    logger.info("Handling RAG query for travel knowledge")
+    
+    original_query = state["user_message"]  # Latest message only
+    destination = state.get("destination", "")
+    
+    try:
+        # Step 1: Detect language of the query
+        detected_lang = language_detector.detect_language(original_query)
+        logger.info(f"Detected query language: {detected_lang}")
+        
+        # Step 2: Translate to Korean if needed (for better RAG with Korean documents)
+        if detected_lang == "ko":
+            query_for_rag = original_query
+            logger.info("Using original Korean query for RAG")
+        else:
+            logger.info("Translating query to Korean for RAG")
+            query_for_rag = await language_detector.translate_to_korean(original_query)
+            logger.info(f"Translated query: {query_for_rag}")
+        
+        # Step 3: Generate query embedding
+        logger.info("Step 1: Generating query embedding")
+        query_embedding = await embed_query.ainvoke({"query": query_for_rag})
+        state["actions_taken"].append("generated_embedding")
+        
+        # Step 4: Search vector database
+        logger.info("Step 2: Searching vector database")
+        
+        # Note: Not using location filters since our documents are general travel info
+        # Documents don't have location metadata set
+        search_results = await search_vector_db.ainvoke({
+            "query_embedding": query_embedding,
+            "top_k": settings.RAG_TOP_K,
+            "filters": None  # No filters for now
+        })
+        
+        state["rag_documents"] = search_results
+        state["actions_taken"].append(f"retrieved_{len(search_results)}_documents")
+        logger.info(f"Retrieved {len(search_results)} documents from vector DB")
+        
+        if not search_results:
+            logger.warning("No documents found in vector DB")
+            no_result_msg = (
+                "I don't have specific information about that in my knowledge base yet. "
+                "However, I can help you find places to visit or plan your itinerary!"
+            )
+            # Return in original language
+            if detected_lang == "ko":
+                no_result_msg = await language_detector.translate_to_korean(no_result_msg)
+            
+            state["rag_answer"] = no_result_msg
+            state["rag_cited_sources"] = []
+            return state
+        
+        # Step 5: Rerank documents for relevance
+        logger.info("Step 3: Reranking documents")
+        rerank_result = await rerank_documents.ainvoke({
+            "query": query_for_rag,  # Use Korean query for reranking
+            "documents": search_results,
+            "max_tokens": settings.RAG_MAX_TOKENS
+        })
+        
+        state["actions_taken"].append("reranked_documents")
+        
+        # Extract reranked answer and citations (in Korean)
+        rag_answer_korean = rerank_result.get("result", "")
+        state["rag_cited_sources"] = rerank_result.get("cited_documents", [])
+        
+        logger.info(f"RAG answer generated with {len(state['rag_cited_sources'])} cited sources")
+        
+        # Step 6: Translate answer based on original query language
+        if detected_lang == "ko":
+            # Original query was Korean -> return Korean answer
+            state["rag_answer"] = rag_answer_korean
+            logger.info("Keeping answer in Korean (original query was Korean)")
+        else:
+            # Original query was not Korean -> translate answer to English
+            logger.info("Translating RAG answer from Korean to English")
+            state["rag_answer"] = await language_detector.translate_to_language(rag_answer_korean, "en")
+            state["actions_taken"].append("translated_answer_to_english")
+        
+        # Step 7: Fetch full metadata for cited documents
+        logger.info("Step 4: Enriching cited sources with metadata")
+        for source in state["rag_cited_sources"]:
+            doc_id = source.get("metadata", {}).get("document_id")
+            if doc_id:
+                metadata = await fetch_document_metadata.ainvoke({"document_id": doc_id})
+                if metadata:
+                    source["full_metadata"] = metadata
+        
+        state["actions_taken"].append("enriched_citations")
+        
+        # Add suggested follow-up queries if available
+        suggested_queries = rerank_result.get("suggested_queries", [])
+        if suggested_queries:
+            state["next_suggestions"] = suggested_queries[:3]  # Limit to 3 suggestions
+        
+        logger.info("RAG query handling completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error handling RAG query: {e}", exc_info=True)
+        state["actions_taken"].append("rag_query_failed")
+        
+        error_msg = (
+            "I encountered an issue while searching for that information. "
+            "Please try asking in a different way, or I can help you find places to visit instead!"
+        )
+        
+        # Return error in original language
+        detected_lang = language_detector.detect_language(original_query)
+        if detected_lang == "ko":
+            error_msg = await language_detector.translate_to_korean(error_msg)
+        
+        state["rag_answer"] = error_msg
+        state["rag_cited_sources"] = []
+    
+    return state
 
 
 async def save_response(state: AgentState) -> AgentState:

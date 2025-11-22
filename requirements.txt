@@ -21,3 +21,7 @@ typing-extensions>=4.8.0
 # tools
 crewai>=0.80.0
 crewai-tools>=0.14.0
+
+# Vector database and RAG
+pinecone>=8.0.0
+tiktoken>=0.5.0  # For token counting
