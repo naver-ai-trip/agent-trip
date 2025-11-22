@@ -12,6 +12,7 @@ from src.graph.nodes import (
     casual_conversation,
     search_and_plan,
     handle_rag_query,
+    find_hotel_offers,
     generate_response,
     save_response
 )
@@ -45,6 +46,7 @@ def create_agent_graph():
     workflow.add_node("conversation", casual_conversation)
     workflow.add_node("search_plan", search_and_plan)
     workflow.add_node("rag_query", handle_rag_query)
+    workflow.add_node("find_hotel", find_hotel_offers)
     workflow.add_node("generate", generate_response)
     workflow.add_node("save", save_response)
     
@@ -65,6 +67,8 @@ def create_agent_graph():
         # Route based on detected intent
         if intent == "rag_query":
             return "rag_query"
+        elif intent == "find_hotel":
+            return "find_hotel"
         elif intent == "trip_planning" or intent == "suggest_places":
             return "search_plan"
         elif intent == "conversation":
@@ -80,6 +84,7 @@ def create_agent_graph():
             "conversation": "conversation",
             "search_plan": "search_plan",
             "rag_query": "rag_query",
+            "find_hotel": "find_hotel",
             "generate": "generate"
         }
     )
@@ -87,6 +92,7 @@ def create_agent_graph():
     workflow.add_edge("conversation", "generate")
     workflow.add_edge("search_plan", "generate")
     workflow.add_edge("rag_query", "generate")
+    workflow.add_edge("find_hotel", "generate")
     workflow.add_edge("generate", "save")
     workflow.add_edge("save", END)
     

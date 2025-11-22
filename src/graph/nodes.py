@@ -111,7 +111,17 @@ async def route_request(state: AgentState) -> AgentState:
         logger.info("Intent: Image Translation")
         return state
     
-    # 1. Check for RAG queries (culture, history, customs, tips)
+    # 1. Check for hotel/accommodation queries
+    hotel_keywords = [
+        "hotel", "accommodation", "where to stay", "place to stay", "book hotel",
+        "호텔", "숙소", "숙박", "묵을", "예약"
+    ]
+    if any(keyword in user_msg_lower for keyword in hotel_keywords):
+        state["intent_type"] = "find_hotel"
+        logger.info("Intent: Find Hotel")
+        return state
+    
+    # 2. Check for RAG queries (culture, history, customs, tips)
     # RAG keywords: culture, history, custom, etiquette, tradition, tip, insight, about, dynasty, palace, temple
     if settings.RAG_ENABLED and is_rag_query(user_msg):
         state["intent_type"] = "rag_query"
@@ -119,7 +129,7 @@ async def route_request(state: AgentState) -> AgentState:
         logger.info("Intent: RAG Query (culture/history/tips)")
         return state
     
-    # 2. Check for trip planning keywords (create itinerary, plan trip)
+    # 3. Check for trip planning keywords (create itinerary, plan trip)
     trip_planning_keywords = [
         "plan", "itinerary", "schedule", "trip plan", "travel plan",
         "계획", "일정", "여행 계획", "스케줄"
@@ -129,7 +139,7 @@ async def route_request(state: AgentState) -> AgentState:
         logger.info("Intent: Trip Planning")
         return state
     
-    # 3. Check for place suggestion keywords (find, recommend, suggest)
+    # 4. Check for place suggestion keywords (find, recommend, suggest)
     place_keywords = [
         "suggest", "recommend", "find", "show me", "looking for", "search",
         "추천", "찾아", "보여", "검색"
@@ -139,7 +149,7 @@ async def route_request(state: AgentState) -> AgentState:
         logger.info("Intent: Suggest Places")
         return state
     
-    # 4. Default to casual conversation (greetings, general chat)
+    # 5. Default to casual conversation (greetings, general chat)
     # This handles: hi, hello, how are you, tell me about yourself, etc.
     state["intent_type"] = "conversation"
     logger.info("Intent: Casual Conversation")
@@ -237,44 +247,55 @@ async def search_and_plan(state: AgentState) -> AgentState:
     try:
         # Calculate number of days
         num_days = 1
+        new_travel_dates = None
         
-        # First check travel_dates from session context
-        if travel_dates and travel_dates.get("start") and travel_dates.get("end"):
-            from datetime import datetime
+        # Try to extract dates from user message FIRST (takes priority over session context)
+        import re
+        from datetime import datetime
+        
+        # PRIORITY 1: Try to find date ranges in the message first
+        date_pattern = r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})'
+        dates = re.findall(date_pattern, user_msg)
+        if len(dates) >= 2:
+            try:
+                # Parse first date (start)
+                start = datetime(int(dates[0][2]), int(dates[0][1]), int(dates[0][0]))
+                # Parse second date (end)
+                end = datetime(int(dates[1][2]), int(dates[1][1]), int(dates[1][0]))
+                num_days = (end - start).days + 1
+                
+                # Store new travel dates
+                new_travel_dates = {
+                    "start": start.strftime("%Y-%m-%d"),
+                    "end": end.strftime("%Y-%m-%d")
+                }
+                
+                logger.info(f"Extracted {num_days} days from date range in message: {new_travel_dates['start']} to {new_travel_dates['end']}")
+            except Exception as e:
+                logger.warning(f"Failed to parse date range: {e}")
+        
+        # PRIORITY 2: If no dates in message, check travel_dates from session context
+        if num_days == 1 and travel_dates and travel_dates.get("start") and travel_dates.get("end"):
             try:
                 start = datetime.fromisoformat(str(travel_dates["start"]).replace('/', '-'))
                 end = datetime.fromisoformat(str(travel_dates["end"]).replace('/', '-'))
                 num_days = (end - start).days + 1
-                logger.info(f"Extracted {num_days} days from session travel_dates")
-            except:
-                pass
+                logger.info(f"Using {num_days} days from session travel_dates")
+            except Exception as e:
+                logger.warning(f"Failed to parse session travel_dates: {e}")
         
-        # Try to extract from user message if not in context
+        # PRIORITY 3: If still no dates, look for day count patterns in message
         if num_days == 1:
-            import re
-            
-            # PRIORITY 1: Try to find date ranges first (more accurate than text)
-            date_pattern = r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})'
-            dates = re.findall(date_pattern, user_msg)
-            if len(dates) >= 2:
-                try:
-                    from datetime import datetime
-                    # Parse first date (start)
-                    start = datetime(int(dates[0][2]), int(dates[0][1]), int(dates[0][0]))
-                    # Parse second date (end)
-                    end = datetime(int(dates[1][2]), int(dates[1][1]), int(dates[1][0]))
-                    num_days = (end - start).days + 1
-                    logger.info(f"Extracted {num_days} days from date range in message")
-                except Exception as e:
-                    logger.warning(f"Failed to parse date range: {e}")
-            
-            # PRIORITY 2: If no date range found, look for day count patterns
-            if num_days == 1:
-                # Look for patterns like "3 day trip", "5 days", "3-day", etc.
-                day_match = re.search(r'(\d+)\s*[-\s]?\s*days?', user_msg)
-                if day_match:
-                    num_days = int(day_match.group(1))
-                    logger.info(f"Extracted {num_days} days from text pattern")
+            # Look for patterns like "3 day trip", "5 days", "3-day", etc.
+            day_match = re.search(r'(\d+)\s*[-\s]?\s*days?', user_msg)
+            if day_match:
+                num_days = int(day_match.group(1))
+                logger.info(f"Extracted {num_days} days from text pattern")
+        
+        # Update travel_dates if new dates were extracted from message
+        if new_travel_dates:
+            state["travel_dates"] = new_travel_dates
+            logger.info(f"Updated travel_dates in state: {new_travel_dates}")
         
         logger.info(f"Request type: {'Trip Planning' if is_trip_planning else 'Suggest Places'}, Days: {num_days}")
         
@@ -595,23 +616,29 @@ async def _search_places_for_trip_planning(destination: str, interests: list, nu
     return scheduled_places
 
 
-async def _translate_components_to_english(components: list) -> list:
-    """Translate place data in components to English.
+async def _translate_components_to_target_language(components: list, target_lang: str) -> list:
+    """Translate place data in components to target language.
     
-    Translates Korean text in: name, category, description, address
+    Translates text in: name, category, description, address to match user's language
     Preserves: coordinates, times, ratings, URLs, phone numbers, all structure
     
     Args:
         components: List of component objects with place data
+        target_lang: Target language code ('en' or 'ko')
         
     Returns:
-        Components with translated English text
+        Components with translated text
     """
     try:
+        # Skip if target is Korean (backend returns Korean by default)
+        if target_lang == "ko":
+            return components
+        
         # Collect all places that need translation
         all_places = []
         for component in components:
-            if component.get("type") in ["trip_plan_day_schedule", "places_list"]:
+            comp_type = component.get("type")
+            if comp_type in ["trip_plan_day_schedule", "places_list", "trip_planning"]:
                 data = component.get("data", {})
                 places = data.get("places", [])
                 all_places.extend(places)
@@ -619,82 +646,80 @@ async def _translate_components_to_english(components: list) -> list:
         if not all_places:
             return components
         
-        logger.info(f"Translating {len(all_places)} places to English")
+        logger.info(f"Translating {len(all_places)} places to {target_lang}")
         
-        # Batch translate all text fields
+        # Process in batches of 15 to handle all places
         from langchain_core.messages import SystemMessage, HumanMessage
-        
-        # Prepare translation batch
-        texts_to_translate = []
-        for place in all_places:
-            # Collect Korean text fields
-            name = place.get("name", "")
-            category = place.get("category", "")
-            address = place.get("address", "")
-            road_address = place.get("road_address", "")
-            
-            # Create translation request
-            if name or category or address:
-                texts_to_translate.append({
-                    "name": name,
-                    "category": category,
-                    "address": address,
-                    "road_address": road_address
-                })
-        
-        # Translate using LLM in batch
-        translation_prompt = f"""Translate the following Korean place information to English. Return ONLY a JSON array with the same structure.
-
-For each place, translate:
-- name: place name to English
-- category: category to English (e.g., "여행,명소>궁궐" -> "Travel & Attractions > Palace")
-- address: translate city/district names but keep street numbers and building names
-- road_address: same as address
-
-Keep the exact same JSON structure. Return valid JSON array only.
-
-Places to translate:
-{texts_to_translate[:10]}"""  # Limit to 10 places per batch for token limits
-        
-        messages = [
-            SystemMessage(content="You are a professional translator specializing in Korean to English translation for travel information."),
-            HumanMessage(content=translation_prompt)
-        ]
-        
-        response = await llm.ainvoke(messages)
-        translated_text = response.content.strip()
-        
-        # Parse translated JSON
         import json
         import re
         
-        # Extract JSON array from response
-        json_match = re.search(r'\[.*\]', translated_text, re.DOTALL)
-        if json_match:
-            translated_data = json.loads(json_match.group())
+        batch_size = 15
+        for i in range(0, len(all_places), batch_size):
+            batch = all_places[i:i+batch_size]
             
-            # Map translations back to places
-            for i, place in enumerate(all_places[:len(translated_data)]):
-                if i < len(translated_data):
-                    trans = translated_data[i]
-                    if trans.get("name"):
-                        place["name"] = trans["name"]
-                    if trans.get("category"):
-                        place["category"] = trans["category"]
-                    if trans.get("address"):
-                        place["address"] = trans["address"]
-                    if trans.get("road_address"):
-                        place["road_address"] = trans["road_address"]
+            # Prepare translation batch
+            texts_to_translate = []
+            for place in batch:
+                texts_to_translate.append({
+                    "name": place.get("name", ""),
+                    "category": place.get("category", ""),
+                    "address": place.get("address", ""),
+                    "road_address": place.get("road_address", "")
+                })
             
-            logger.info(f"Successfully translated {len(translated_data)} places to English")
-        else:
-            logger.warning("Could not parse translation response, using original Korean text")
+            # Translate using LLM
+            translation_prompt = f"""Translate the following Korean place information to English. Return ONLY a JSON array.
+
+For each place:
+- name: translate to English
+- category: translate to English (e.g., "여행,명소>궁궐" -> "Travel & Attractions > Palace")
+- address: translate city/district names, keep numbers
+- road_address: same as address
+
+Return valid JSON array only:
+{json.dumps(texts_to_translate, ensure_ascii=False)}"""
+            
+            messages = [
+                SystemMessage(content="You are a translator. Return only valid JSON."),
+                HumanMessage(content=translation_prompt)
+            ]
+            
+            try:
+                response = await llm.ainvoke(messages)
+                translated_text = response.content.strip()
+                
+                # Extract JSON array
+                json_match = re.search(r'\[.*\]', translated_text, re.DOTALL)
+                if json_match:
+                    translated_data = json.loads(json_match.group())
+                    
+                    # Map translations back to places
+                    for j, place in enumerate(batch):
+                        if j < len(translated_data):
+                            trans = translated_data[j]
+                            if trans.get("name"):
+                                place["name"] = trans["name"]
+                            if trans.get("category"):
+                                place["category"] = trans["category"]
+                            if trans.get("address"):
+                                place["address"] = trans["address"]
+                            if trans.get("road_address"):
+                                place["road_address"] = trans["road_address"]
+            except Exception as e:
+                logger.error(f"Batch translation failed: {e}")
+                continue
         
+        logger.info(f"Successfully translated places to {target_lang}")
         return components
         
     except Exception as e:
         logger.error(f"Translation failed: {e}, returning original components")
         return components
+
+
+async def _translate_components_to_english(components: list) -> list:
+    """Legacy function - redirects to new translation function."""
+    return await _translate_components_to_target_language(components, "en")
 
 
 async def generate_response(state: AgentState) -> AgentState:
@@ -707,6 +732,11 @@ async def generate_response(state: AgentState) -> AgentState:
         Updated state with final response
     """
     logger.info("Generating final response")
+    
+    # If final_response already set (by hotel search, etc.), skip generation
+    if state.get("final_response"):
+        logger.info("Final response already set by previous node, skipping generation")
+        return state
     
     # Handle image translation trigger
     if state.get("trigger_image_translation"):
@@ -733,6 +763,11 @@ async def generate_response(state: AgentState) -> AgentState:
         logger.info("Generating RAG response with citations")
         
         rag_answer = state["rag_answer"]
+        
+        # Clean up the answer: replace escaped newlines with actual newlines
+        # Also handle other common escape sequences
+        rag_answer = rag_answer.replace("\\n", "\n").replace("\\t", "\t")
+        
         cited_sources = state.get("rag_cited_sources", [])
         
         # Format citations for UI
@@ -789,7 +824,6 @@ async def generate_response(state: AgentState) -> AgentState:
         
         if request_type == "trip_planning":
             # TRIP PLANNING RESPONSE
-            message = f"I've created a {num_days}-day itinerary for {destination} with {len(places)} activities including meals and attractions!"
             
             # Group places by day for trip planning
             days_schedule = {}
@@ -798,6 +832,20 @@ async def generate_response(state: AgentState) -> AgentState:
                 if day not in days_schedule:
                     days_schedule[day] = []
                 days_schedule[day].append(place)
+            
+            # FIX: Calculate actual num_days from the scheduled places
+            # This ensures consistency between places and num_days
+            actual_num_days = max(days_schedule.keys()) if days_schedule else num_days
+            
+            # Log warning if mismatch
+            if actual_num_days != num_days:
+                logger.warning(f"Mismatch: requested {num_days} days but scheduled {actual_num_days} days. Using requested value.")
+                # Use the requested num_days, not the scheduled days
+                # Filter places to only include requested days
+                places = [p for p in places if p.get("day", 1) <= num_days]
+                days_schedule = {day: day_places for day, day_places in days_schedule.items() if day <= num_days}
+            
+            message = f"I've created a {num_days}-day itinerary for {destination} with {len(places)} activities including meals and attractions!"
             
             # Create trip planning component with all places
             components = [{
@@ -818,11 +866,20 @@ async def generate_response(state: AgentState) -> AgentState:
                 "Save trip plan"
             ]
             
-            # Translate components to English
-            translated_components = await _translate_components_to_english(components)
+            # Translate components to user's language
+            user_lang = state.get("user_language", "en")
+            translated_components = await _translate_components_to_target_language(components, user_lang)
+            
+            # Translate message if not English
+            response_message = message
+            if user_lang != "en":
+                try:
+                    response_message = await language_detector.translate_to_language(message, user_lang)
+                except Exception as e:
+                    logger.error(f"Failed to translate message: {e}")
             
             state["final_response"] = {
-                "message": message,
+                "message": response_message,
                 "message_type": "trip_planning",
                 "components": translated_components,
                 "actions_taken": state["actions_taken"],
@@ -847,10 +904,18 @@ async def generate_response(state: AgentState) -> AgentState:
                 next_suggestions=next_suggestions
             )
             
-            # Translate components to English
+            # Translate components to user's language
+            user_lang = state.get("user_language", "en")
             components = formatted_response.get("components", [])
-            translated_components = await _translate_components_to_english(components)
+            translated_components = await _translate_components_to_target_language(components, user_lang)
             formatted_response["components"] = translated_components
+            
+            # Translate message if not English
+            if user_lang != "en":
+                try:
+                    formatted_response["message"] = await language_detector.translate_to_language(message, user_lang)
+                except Exception as e:
+                    logger.error(f"Failed to translate message: {e}")
             
             state["final_response"] = formatted_response
     else:
@@ -1023,6 +1088,226 @@ async def handle_rag_query(state: AgentState) -> AgentState:
         
         state["rag_answer"] = error_msg
         state["rag_cited_sources"] = []
+    
+    return state
+
+
+async def find_hotel_offers(state: AgentState) -> AgentState:
+    """Handle hotel search queries.
+    
+    This node searches for hotels with available offers. It first needs to:
+    1. Extract destination and get coordinates
+    2. Check if we have check-in/out dates and guest details
+    3. If missing details, ask user for clarification
+    4. Search hotels and return offers
+    
+    Args:
+        state: Current agent state
+        
+    Returns:
+        Updated state with hotel offers or clarification request
+    """
+    from src.tools.hotel_tools import get_location_coordinates, search_hotels_with_offers, format_hotel_offers_response
+    import re
+    from datetime import datetime, timedelta
+    
+    logger.info("Handling hotel search query")
+    
+    user_msg = state["user_message"]
+    destination = state.get("destination", "")
+    auth_token = state.get("auth_token", "")
+    
+    # Extract destination from message if not in context
+    if not destination:
+        # Try to extract city name from message
+        words = user_msg.split()
+        for word in words:
+            if word[0].isupper() and len(word) > 3:
+                destination = word
+                break
+        
+        if not destination:
+            destination = "Seoul"  # Default to Seoul
+    
+    # Check if we have hotel search parameters (check-in, check-out, guests)
+    hotel_params = state.get("hotel_search_params")
+    
+    if not hotel_params:
+        # Try to extract dates from message
+        date_pattern = r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})'
+        dates = re.findall(date_pattern, user_msg)
+        
+        # Try to extract number of people (optional, defaults to 2)
+        people_pattern = r'(\d+)\s*(?:people|person|adult|adults|guest|guests)'
+        people_match = re.search(people_pattern, user_msg.lower())
+        adults = int(people_match.group(1)) if people_match else 2  # Default to 2 adults
+        
+        # Only require dates (guests defaults to 2 if not specified)
+        if not dates or len(dates) < 2:
+            state["needs_hotel_details"] = True
+            state["actions_taken"].append("Requested hotel search details")
+            
+            clarification_msg = (
+                f"I'd be happy to help you find hotels in {destination}! "
+                f"To search for the best options, I need to know:\n\n"
+                f"• When will you check in and check out? (e.g., 25/11/2025 to 27/11/2025)\n\n"
+                f"Please provide these dates so I can find the perfect accommodations for you!"
+            )
+            
+            state["final_response"] = {
+                "message": clarification_msg,
+                "message_type": "hotel_clarification",
+                "components": [],
+                "actions_taken": state["actions_taken"],
+                "next_suggestions": [
+                    "Provide check-in and check-out dates",
+                    "Search for other options"
+                ]
+            }
+            
+            logger.info("Requesting hotel search dates from user")
+            return state
+        
+        # Parse dates
+        try:
+            check_in = datetime(int(dates[0][2]), int(dates[0][1]), int(dates[0][0]))
+            check_out = datetime(int(dates[1][2]), int(dates[1][1]), int(dates[1][0]))
+            
+            hotel_params = {
+                "check_in_date": check_in.strftime("%Y-%m-%d"),
+                "check_out_date": check_out.strftime("%Y-%m-%d"),
+                "adults": adults or 2,
+                "room_quantity": 1,
+                "currency": "KRW"
+            }
+            
+            state["hotel_search_params"] = hotel_params
+            logger.info(f"Extracted hotel params: {hotel_params}")
+            
+        except Exception as e:
+            logger.error(f"Error parsing dates: {e}")
+            state["final_response"] = {
+                "message": "I couldn't understand the dates. Please provide them in format DD/MM/YYYY (e.g., 25/11/2025).",
+                "message_type": "error",
+                "components": [],
+                "actions_taken": state["actions_taken"],
+                "next_suggestions": []
+            }
+            return state
+    
+    try:
+        # Step 1: Get coordinates for destination
+        state["actions_taken"].append(f"Getting coordinates for {destination}")
+        coords = await get_location_coordinates.ainvoke({
+            "destination": destination,
+            "auth_token": auth_token
+        })
+        
+        if not coords:
+            state["final_response"] = {
+                "message": f"Sorry, I couldn't find the location for {destination}. Please try a different city or location.",
+                "message_type": "error",
+                "components": [],
+                "actions_taken": state["actions_taken"],
+                "next_suggestions": ["Try different location", "Search places instead"]
+            }
+            return state
+        
+        # Step 2: Search for hotels with offers
+        state["actions_taken"].append("Searching for hotels")
+        hotel_data = await search_hotels_with_offers.ainvoke({
+            "latitude": coords["latitude"],
+            "longitude": coords["longitude"],
+            "check_in_date": hotel_params["check_in_date"],
+            "check_out_date": hotel_params["check_out_date"],
+            "adults": hotel_params["adults"],
+            "radius": 20,
+            "radius_unit": "KM",
+            "room_quantity": hotel_params.get("room_quantity", 1),
+            "currency": hotel_params.get("currency", "KRW")
+        })
+        
+        # Step 3: Format the response
+        offers = hotel_data.get("data", {}).get("offers", [])
+        total_offers = hotel_data.get("meta", {}).get("total_offers", 0)
+        
+        if not offers or total_offers == 0:
+            state["final_response"] = {
+                "message": f"Sorry, I couldn't find any available hotels in {destination} for your dates. Try different dates or location.",
+                "message_type": "hotel_offers",
+                "components": [],
+                "actions_taken": state["actions_taken"],
+                "next_suggestions": ["Try different dates", "Search other locations", "Find places instead"]
+            }
+            return state
+        
+        # Format hotel offers
+        components = format_hotel_offers_response(
+            hotel_data,
+            hotel_params["check_in_date"],
+            hotel_params["check_out_date"],
+            destination
+        )
+        
+        state["hotel_offers"] = components
+        state["actions_taken"].append(f"Found {total_offers} hotel offers")
+        
+        # Generate message
+        nights = (datetime.strptime(hotel_params["check_out_date"], "%Y-%m-%d") - 
+                 datetime.strptime(hotel_params["check_in_date"], "%Y-%m-%d")).days
+        
+        message = (
+            f"I found {total_offers} available hotel offers in {destination} "
+            f"for {nights} night{'s' if nights > 1 else ''} "
+            f"({hotel_params['check_in_date']} to {hotel_params['check_out_date']}) "
+            f"for {hotel_params['adults']} guest{'s' if hotel_params['adults'] > 1 else ''}!"
+        )
+        
+        # Translate message to user's language
+        user_lang = state.get("user_language", "en")
+        response_message = message
+        if user_lang != "en":
+            try:
+                response_message = await language_detector.translate_to_language(message, user_lang)
+            except Exception as e:
+                logger.error(f"Failed to translate message: {e}")
+        
+        # Translate suggestions to user's language
+        suggestions = [
+            "Show hotel details",
+            "Compare prices",
+            "Find places to visit",
+            "Plan itinerary"
+        ]
+        if user_lang != "en":
+            try:
+                translated_suggestions = []
+                for suggestion in suggestions:
+                    trans = await language_detector.translate_to_language(suggestion, user_lang)
+                    translated_suggestions.append(trans)
+                suggestions = translated_suggestions
+            except Exception as e:
+                logger.error(f"Failed to translate suggestions: {e}")
+        
+        state["final_response"] = {
+            "message": response_message,
+            "message_type": "hotel_offers",
+            "components": components,
+            "actions_taken": state["actions_taken"],
+            "next_suggestions": suggestions
+        }
+        
+        logger.info(f"Hotel search completed: {total_offers} offers found")
+        
+    except Exception as e:
+        logger.error(f"Error in hotel search: {e}", exc_info=True)
+        state["final_response"] = {
+            "message": "I encountered an error while searching for hotels. Please try again.",
+            "message_type": "error",
+            "components": [],
+            "actions_taken": state["actions_taken"] + ["Hotel search failed"],
+            "next_suggestions": ["Try again", "Search places instead"]
+        }
     
     return state
 

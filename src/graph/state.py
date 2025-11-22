@@ -40,6 +40,11 @@ class AgentState(MessagesState):
     request_type: Optional[str] = None  # "trip_planning" or "suggest_places"
     num_days: int = 1  # Number of days for trip planning
     
+    # Hotel search results
+    hotel_offers: List[Dict[str, Any]] = []
+    hotel_search_params: Optional[Dict[str, Any]] = None
+    needs_hotel_details: bool = False  # Flag to ask for check-in/out dates
+    
     # RAG (Knowledge retrieval) results
     rag_documents: List[Dict[str, Any]] = []
     rag_answer: Optional[str] = None
