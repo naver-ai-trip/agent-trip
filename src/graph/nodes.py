@@ -12,6 +12,7 @@ from src.graph.state import AgentState
 from src.graph.response_formatter import response_formatter
 from src.utils.api_client import api_client
 from src.utils.translator import language_detector
+from src.utils.context import set_auth_token
 from src.tools.place_tools import (
     search_places_by_text,
     search_nearby_places,
@@ -40,9 +41,14 @@ async def initialize_session(state: AgentState) -> AgentState:
     """
     logger.info(f"Initializing session {state['session_id']}")
     
+    # Set auth token in context for tools to use
+    if state.get("auth_token"):
+        set_auth_token(state["auth_token"])
+    
     try:
         # Get chat session details
-        session_data = await api_client.get_chat_session(state["session_id"])
+        auth_token = state.get("auth_token")
+        session_data = await api_client.get_chat_session(state["session_id"], auth_token)
         
         # Extract context
         context = session_data.get("context", {})
@@ -150,7 +156,7 @@ Respond with JSON:
         # For now, perform place search
         # Translate user message to Korean for searching
         search_query = destination if destination else user_msg
-        korean_query = language_detector.translate_to_korean(search_query)
+        korean_query = await language_detector.translate_to_korean(search_query)
         
         # Search for places
         places = await search_places_by_text.ainvoke({"query": korean_query})
@@ -285,15 +291,26 @@ async def save_response(state: AgentState) -> AgentState:
             message_content = json.dumps(state["final_response"], ensure_ascii=False)
             
             # Send to backend
+            auth_token = state.get("auth_token")
+            
+            # Build references from places found
+            references = []
+            for place in state.get("places_found", [])[:5]:  # Limit to first 5 places
+                if place.get("id"):
+                    references.append({"type": "place", "id": place["id"]})
+            
             await api_client.send_message(
                 session_id=state["session_id"],
                 message=message_content,
+                auth_token=auth_token,
                 from_role="assistant",
+                message_type="text",
                 metadata={
                     "model": settings.MODEL_NAME,
                     "actions_taken": state["actions_taken"],
                     "places_count": len(state.get("places_found", []))
-                }
+                },
+                references=references if references else None
             )
             
             state["actions_taken"].append("Response saved to database")

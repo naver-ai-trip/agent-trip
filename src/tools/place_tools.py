@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 from src.utils.api_client import api_client
 from src.utils.translator import language_detector
+from src.utils.context import get_auth_token
 
 
 def generate_random_rating(min_rating: float = 4.6, max_rating: float = 5.0) -> float:
@@ -51,12 +52,18 @@ async def search_places_by_text(query: str) -> List[Dict[str, Any]]:
         List of places with details including name, address, coordinates, rating, etc.
     """
     try:
+        # Get auth token from context
+        auth_token = get_auth_token()
+        if not auth_token:
+            logger.error("No auth token available in context")
+            return []
+        
         # Translate query to Korean for backend
-        korean_query = language_detector.translate_to_korean(query)
+        korean_query = await language_detector.translate_to_korean(query)
         logger.info(f"Searching places with query: {query} (Korean: {korean_query})")
         
         # Search using backend API
-        places = await api_client.search_places(korean_query)
+        places = await api_client.search_places(korean_query, auth_token)
         
         # Add ratings to all places
         places_with_ratings = [add_rating_to_place(place) for place in places]
@@ -88,10 +95,16 @@ async def search_nearby_places(
         List of nearby places with details
     """
     try:
+        # Get auth token from context
+        auth_token = get_auth_token()
+        if not auth_token:
+            logger.error("No auth token available in context")
+            return []
+        
         # Translate query to Korean if provided
         korean_query = None
         if query:
-            korean_query = language_detector.translate_to_korean(query)
+            korean_query = await language_detector.translate_to_korean(query)
         
         logger.info(f"Searching nearby places at ({latitude}, {longitude}) with radius {radius}m")
         
@@ -100,7 +113,8 @@ async def search_nearby_places(
             latitude=latitude,
             longitude=longitude,
             query=korean_query,
-            radius=radius
+            radius=radius,
+            auth_token=auth_token
         )
         
         # Add ratings to all places
@@ -115,30 +129,92 @@ async def search_nearby_places(
 
 
 @tool
-async def scrape_korea_tourist_spots(region: Optional[str] = None) -> str:
-    """Scrape tourist attractions from VisitKorea website for Korean regions.
+async def scrape_korea_tourist_spots(region: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Scrape and extract tourist attractions from VisitKorea website for Korean regions.
+    Uses AI to intelligently extract structured information about tourist spots including
+    names, descriptions, locations, and categories.
     
     Args:
-        region: Optional specific region to focus on
+        region: Optional specific region to focus on (e.g., "Seoul", "Busan", "Jeju")
         
     Returns:
-        Scraped content containing tourist spots information
+        List of tourist spots with structured information (name, description, location, category)
     """
     try:
-        logger.info("Scraping VisitKorea website for tourist spots")
+        logger.info(f"Scraping VisitKorea website for tourist spots{f' in {region}' if region else ''}")
         
+        # Scrape the website
         scraper = ScrapeWebsiteTool(
             website_url="https://english.visitkorea.or.kr/svc/whereToGo/allRgn/allRegionList.do?menuSn=216"
         )
         
-        content = scraper.run()
-        logger.info("Successfully scraped VisitKorea website")
+        raw_content = scraper.run()
         
-        return content
+        # Use LLM to extract structured tourist information
+        from langchain_openai import ChatOpenAI
+        from src.config import settings
+        
+        llm = ChatOpenAI(
+            model=settings.MODEL_NAME,
+            temperature=0.3,
+            openai_api_key=settings.OPENAI_API_KEY
+        )
+        
+        extraction_prompt = f"""You are a travel data extraction expert. Extract tourist attractions from the following website content.
+
+Website Content:
+{raw_content[:8000]}  # Limit content to avoid token limits
+
+Instructions:
+1. Extract tourist spots, attractions, and destinations
+2. For each place, identify: name, brief description, location/region, category (e.g., palace, temple, nature, shopping, entertainment)
+3. Focus on {region if region else "all regions in Korea"}
+4. Return ONLY valid JSON array format, no additional text
+
+Return format:
+[
+  {{
+    "name": "Place name in English",
+    "korean_name": "한글 이름 (if available)",
+    "description": "Brief description",
+    "location": "City/Region",
+    "category": "tourist_attraction/temple/palace/nature/shopping/entertainment",
+    "highlights": ["highlight1", "highlight2"]
+  }}
+]
+
+Extract at least 10-15 tourist spots if available."""
+
+        response = await llm.ainvoke(extraction_prompt)
+        
+        # Parse the LLM response
+        import json
+        import re
+        
+        content = response.content.strip()
+        
+        # Try to extract JSON array from response
+        json_match = re.search(r'\[.*\]', content, re.DOTALL)
+        if json_match:
+            json_str = json_match.group()
+            tourist_spots = json.loads(json_str)
+            
+            # Add random ratings to each spot
+            for spot in tourist_spots:
+                spot["rating"] = generate_random_rating()
+            
+            logger.info(f"Successfully extracted {len(tourist_spots)} tourist spots from VisitKorea")
+            return tourist_spots
+        else:
+            logger.warning("Could not parse JSON from LLM response")
+            return []
     
+    except json.JSONDecodeError as e:
+        logger.error(f"Error parsing extracted tourist data: {e}")
+        return []
     except Exception as e:
         logger.error(f"Error scraping VisitKorea: {e}")
-        return ""
+        return []
 
 
 @tool
@@ -155,9 +231,15 @@ async def get_place_details_by_korean_name(korean_name: str) -> Dict[str, Any]:
         Place details dictionary or empty dict if not found
     """
     try:
+        # Get auth token from context
+        auth_token = get_auth_token()
+        if not auth_token:
+            logger.error("No auth token available in context")
+            return {}
+        
         logger.info(f"Getting place details for Korean name: {korean_name}")
         
-        places = await api_client.search_places(korean_name)
+        places = await api_client.search_places(korean_name, auth_token)
         
         if places:
             place = places[0]  # Get the first (most relevant) result

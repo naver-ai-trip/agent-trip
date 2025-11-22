@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 from src.graph.agent import agent_graph
 from src.graph.state import AgentState
 from src.config import settings
+from src.utils.context import set_auth_token
 
 
 # Create FastAPI app
@@ -36,6 +37,7 @@ class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
     session_id: int
     message: str
+    auth_token: str  # Bearer token from Google OAuth
     trip_id: Optional[int] = None
 
 
@@ -76,10 +78,14 @@ async def chat(request: ChatRequest):
     """
     logger.info(f"Received chat request for session {request.session_id}")
     
+    # Set auth token in context for tools to use
+    set_auth_token(request.auth_token)
+    
     try:
         # Initialize state
         initial_state: AgentState = {
             "messages": [],
+            "auth_token": request.auth_token,  # Pass auth token for backend API calls
             "session_id": request.session_id,
             "trip_id": request.trip_id,
             "user_message": request.message,
@@ -129,12 +135,16 @@ async def chat_stream(request: ChatRequest):
     """
     logger.info(f"Received streaming chat request for session {request.session_id}")
     
+    # Set auth token in context for tools to use
+    set_auth_token(request.auth_token)
+    
     async def event_generator():
         """Generate SSE events for streaming response."""
         try:
             # Initialize state
             initial_state: AgentState = {
                 "messages": [],
+                "auth_token": request.auth_token,  # Pass auth token for backend API calls
                 "session_id": request.session_id,
                 "trip_id": request.trip_id,
                 "user_message": request.message,

@@ -12,6 +12,9 @@ class AgentState(MessagesState):
     custom fields for travel planning context.
     """
     
+    # Authentication
+    auth_token: Optional[str] = None  # Bearer token for backend API
+    
     # Chat session context
     session_id: Optional[int] = None
     trip_id: Optional[int] = None
