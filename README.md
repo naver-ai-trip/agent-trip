@@ -1,5 +1,7 @@
 # Traver - Naver AI-Powered Travel Planning Platform
 
+🎥 **[Watch Demo Video](https://www.youtube.com/watch?v=jn7gALF9Jfo)**
+
 **Traver** is an intelligent travel planning platform powered by Naver AI that handles research, planning, risk detection, booking, and coordination in one unified system.
 
 Built with LangGraph and integrated with backend APIs, Traver provides personalized travel recommendations, creates intelligent itineraries, and offers expert cultural knowledge through AI-powered retrieval.
