@@ -2,7 +2,7 @@
 
 ## 🎥 Demo Video
 
-[![Traver Demo](https://img.youtube.com/vi/jn7gALF9Jfo/1.jpg)](https://youtu.be/jn7gALF9Jfo)
+[![Traver Demo](https://img.youtube.com/vi/jn7gALF9Jfo/2.jpg)](https://youtu.be/jn7gALF9Jfo)
 
 **[Watch the full demo on YouTube →](https://youtu.be/jn7gALF9Jfo)**
 
