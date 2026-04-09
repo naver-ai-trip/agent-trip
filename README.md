@@ -4,7 +4,7 @@
 
 [![Traver Demo](https://img.youtube.com/vi/jn7gALF9Jfo/0.jpg)](https://youtu.be/jn7gALF9Jfo)
 
-**[Watch the full demo on YouTube →](https://youtu.be/jn7gALF9Jfo)**
+**[Watch the full demo on YouTube →](https://youtu.be/jn7gALF9Jfo)** 
 
 **Traver** is an intelligent travel planning platform powered by Naver AI that handles research, planning, risk detection, booking, and coordination in one unified system.
 
@@ -49,7 +49,7 @@ Traver is not just a chatbot - it's a comprehensive travel planning platform tha
 - **Response Translation**: Returns in user's preferred language
 - **RAG Multilingual**: 
   - English query → Korean search → English answer
-  - Korean query → Korean search → Korean answer
+  - Korean query → Korean search → Korean answer.
 
 ### 5. Image Translation (UI-Triggered)
 - Agent recognizes image translation requests
